@@ -1,0 +1,7 @@
+project_id = "tquwzofictzxearqafkv"
+
+[functions.mentor-chat]
+verify_jwt = false
+
+[functions.apply-mentor-changes]
+verify_jwt = false

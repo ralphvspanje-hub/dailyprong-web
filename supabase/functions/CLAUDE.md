@@ -7,6 +7,7 @@ Shared Deno modules imported by multiple edge functions.
 | Module | Export | Used by |
 |--------|--------|---------|
 | `rateLimit.ts` | `checkRateLimit` | mentor-chat, generate-unit, onboarding-chat |
+| `cors.ts` | `getCorsHeaders` | all 6 functions |
 
 Rate limits: 50 calls/user/day (500 for owner via `OWNER_EMAIL` env var), 100 calls/IP/day per endpoint. Auto-cleans rows older than 48h from `api_rate_limits`.
 

@@ -38,8 +38,8 @@ const Auth = () => {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="flex flex-col md:flex-row rounded-2xl border border-border bg-card/80 backdrop-blur-sm overflow-hidden shadow-lg w-full max-w-5xl">
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <div className="flex flex-col md:flex-row rounded-2xl border border-border overflow-hidden shadow-lg w-full max-w-5xl" style={{ background: 'rgba(20, 21, 26, 0.8)', backdropFilter: 'blur(10px)' }}>
         <div className="md:w-2/5 p-8 flex items-center justify-center">
           <Card className="w-full rounded-xl shadow-md">
             <div className="p-6">

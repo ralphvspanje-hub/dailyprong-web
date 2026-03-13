@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 
 const About = () => {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <div className="container max-w-2xl py-12 px-4 space-y-12">
         <Link to="/dashboard">
           <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground">

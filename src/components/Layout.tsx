@@ -33,11 +33,11 @@ export const Layout = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-sm">
         <div className="container flex h-14 items-center justify-between">
           <Link to="/dashboard" className="flex items-center gap-2">
-            <Zap className="h-5 w-5 text-accent" />
+            <img src="/Fork.png" className="h-5 w-5" />
             <span className="font-serif text-lg font-bold tracking-tight">DailyProng</span>
           </Link>
 

@@ -11,7 +11,7 @@ supabase/
 ├── config.toml       # Project ID + function settings
 ├── migrations/       # Postgres schema SQL files
 └── functions/        # Deno edge functions
-    ├── _shared/              # Shared Deno modules (rateLimit.ts)
+    ├── _shared/              # Shared Deno modules (rateLimit.ts, cors.ts)
     ├── mentor-chat/
     ├── apply-mentor-changes/
     ├── generate-unit/

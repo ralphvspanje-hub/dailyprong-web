@@ -4,6 +4,10 @@ This file tracks confusions, mistakes, and improvements made by agents working o
 When you encounter something wrong or unclear in any CLAUDE.md or in the code itself, add an entry here.
 If you resolved it, also update the relevant CLAUDE.md immediately and mark this entry as Fixed.
 
+## 2026-03-14 — RAL-75 — No issues found
+
+## 2026-03-14 — RAL-74 — No issues found
+
 ## 2026-03-13 — RAL-69: Remove VITE_OWNER_EMAIL from client bundle — No issues found
 
 ## Log Format

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useDemo, DEMO_PROFILE, DEMO_PILLARS } from "@/hooks/useDemo";
 import { useMentorName } from "@/hooks/useMentorName";
@@ -10,41 +11,55 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Loader2, Save, AlertTriangle, Trash2, Minus, Plus } from "lucide-react";
+import { Loader2, Save, AlertTriangle, Trash2, Minus, Plus, RotateCcw, Rewind, UserX } from "lucide-react";
 import { toast } from "sonner";
 
 const SettingsPage = () => {
   const { user } = useAuth();
   const { isDemo } = useDemo();
+  const queryClient = useQueryClient();
   const { mentorName, setMentorName: setGlobalMentorName } = useMentorName();
   const [profile, setProfile] = useState<any>(null);
-  const [pillars, setPillars] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingMentor, setSavingMentor] = useState(false);
   const [localMentorName, setLocalMentorName] = useState("");
+  const [resetting, setResetting] = useState(false);
+
+  const { data: fetchedProfile, isLoading: profileLoading } = useQuery({
+    queryKey: ["user_profile", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from("user_profile").select("*").eq("user_id", user!.id).maybeSingle();
+      return data;
+    },
+    enabled: !isDemo && !!user,
+    placeholderData: isDemo ? DEMO_PROFILE : undefined,
+  });
+
+  const { data: pillars = [], isLoading: pillarsLoading } = useQuery({
+    queryKey: ["pillars", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from("pillars").select("*").eq("user_id", user!.id).order("sort_order");
+      return data || [];
+    },
+    enabled: !isDemo && !!user,
+    placeholderData: isDemo ? DEMO_PILLARS : undefined,
+  });
+
+  const loading = profileLoading || pillarsLoading;
+
+  useEffect(() => {
+    if (fetchedProfile) {
+      setProfile(fetchedProfile);
+      setLocalMentorName((fetchedProfile as any)?.mentor_name || "");
+    }
+  }, [fetchedProfile]);
 
   useEffect(() => {
     if (isDemo) {
       setProfile(DEMO_PROFILE);
-      setPillars(DEMO_PILLARS);
       setLocalMentorName(DEMO_PROFILE.mentor_name || "");
-      setLoading(false);
-    } else if (user) {
-      loadSettings();
     }
-  }, [user, isDemo]);
-
-  const loadSettings = async () => {
-    const [profileRes, pillarsRes] = await Promise.all([
-      supabase.from("user_profile").select("*").eq("user_id", user!.id).maybeSingle(),
-      supabase.from("pillars").select("*").eq("user_id", user!.id).order("sort_order"),
-    ]);
-    setProfile(profileRes.data);
-    setPillars(pillarsRes.data || []);
-    setLocalMentorName((profileRes.data as any)?.mentor_name || "");
-    setLoading(false);
-  };
+  }, [isDemo]);
 
   const saveProfile = async () => {
     if (isDemo) { toast.success("Settings saved! (Demo mode)"); return; }
@@ -59,7 +74,10 @@ const SettingsPage = () => {
       })
       .eq("user_id", user!.id);
     if (error) toast.error(error.message);
-    else toast.success("Settings saved.");
+    else {
+      queryClient.invalidateQueries({ queryKey: ["user_profile", user?.id] });
+      toast.success("Settings saved.");
+    }
     setSaving(false);
   };
 
@@ -74,6 +92,7 @@ const SettingsPage = () => {
     if (error) toast.error(error.message);
     else {
       setGlobalMentorName(nameToSave || "Mentor");
+      queryClient.invalidateQueries({ queryKey: ["user_profile", user?.id] });
       toast.success("Mentor name updated.");
     }
     setSavingMentor(false);
@@ -85,7 +104,7 @@ const SettingsPage = () => {
     const { error } = await supabase.from("pillars").update({ current_level: clamped }).eq("id", pillarId);
     if (error) toast.error(error.message);
     else {
-      setPillars(pillars.map(p => p.id === pillarId ? { ...p, current_level: clamped } : p));
+      queryClient.invalidateQueries({ queryKey: ["pillars", user?.id] });
       toast.success("Level updated.");
     }
   };
@@ -96,10 +115,65 @@ const SettingsPage = () => {
       await supabase.from("topic_map").delete().eq("pillar_id", pillarId);
       await supabase.from("phase_weights").delete().eq("pillar_id", pillarId);
       await supabase.from("pillars").delete().eq("id", pillarId);
-      setPillars(pillars.filter(p => p.id !== pillarId));
+      queryClient.invalidateQueries({ queryKey: ["pillars", user?.id] });
       toast.success(`${pillarName} deleted.`);
     } catch (err: any) {
       toast.error("Failed to delete pillar: " + err.message);
+    }
+  };
+
+  const resetAllData = async () => {
+    if (isDemo) { toast.success("Data reset! (Demo mode)"); return; }
+    setResetting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { error } = await supabase.functions.invoke("reset-user-data", {
+        body: { mode: "full" },
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (error) throw error;
+      queryClient.clear();
+      window.location.href = "/onboarding";
+    } catch (err: any) {
+      toast.error("Failed to reset data: " + (err.message || "Unknown error"));
+      setResetting(false);
+    }
+  };
+
+  const rewindData = async () => {
+    if (isDemo) { toast.success("Data rewound! (Demo mode)"); return; }
+    setResetting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { error } = await supabase.functions.invoke("reset-user-data", {
+        body: { mode: "rewind" },
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (error) throw error;
+      queryClient.clear();
+      window.location.href = "/dashboard";
+    } catch (err: any) {
+      toast.error("Failed to rewind data: " + (err.message || "Unknown error"));
+      setResetting(false);
+    }
+  };
+
+  const deleteAccount = async () => {
+    if (isDemo) { toast.success("Account deleted! (Demo mode)"); return; }
+    setResetting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { error } = await supabase.functions.invoke("reset-user-data", {
+        body: { mode: "delete_account" },
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (error) throw error;
+      queryClient.clear();
+      await supabase.auth.signOut();
+      window.location.href = "/auth";
+    } catch (err: any) {
+      toast.error("Failed to delete account: " + (err.message || "Unknown error"));
+      setResetting(false);
     }
   };
 
@@ -149,7 +223,17 @@ const SettingsPage = () => {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>Daily Time (minutes)</Label>
-              <Input type="number" value={profile?.daily_time_commitment || 20} onChange={(e) => setProfile({ ...profile, daily_time_commitment: parseInt(e.target.value) })} min={5} max={120} />
+              <Select value={String(profile?.daily_time_commitment || 15)} onValueChange={(v) => setProfile({ ...profile, daily_time_commitment: parseInt(v) })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5 minutes</SelectItem>
+                  <SelectItem value="10">10 minutes</SelectItem>
+                  <SelectItem value="15">15 minutes</SelectItem>
+                  <SelectItem value="30">30 minutes</SelectItem>
+                  <SelectItem value="45">45 minutes</SelectItem>
+                  <SelectItem value="60">60 minutes</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Learning Cadence</Label>
@@ -164,7 +248,14 @@ const SettingsPage = () => {
             </div>
             <div className="space-y-2">
               <Label>Cycle Length (sections)</Label>
-              <Input type="number" value={profile?.cycle_length || 5} onChange={(e) => setProfile({ ...profile, cycle_length: parseInt(e.target.value) })} min={3} max={10} />
+              <Select value={String(profile?.cycle_length || 5)} onValueChange={(v) => setProfile({ ...profile, cycle_length: parseInt(v) })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="3">3 sections</SelectItem>
+                  <SelectItem value="5">5 sections</SelectItem>
+                  <SelectItem value="7">7 sections</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <Button onClick={saveProfile} disabled={saving} className="gap-2">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -240,14 +331,90 @@ const SettingsPage = () => {
               <AlertTriangle className="h-4 w-4 text-destructive" />
               Danger Zone
             </CardTitle>
+            <CardDescription>Want to tweak your pillars or goals? Talk to your {mentorName} instead.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-4">
             <div>
-              <Button variant="outline" onClick={() => window.location.href = "/onboarding"} className="w-full text-destructive hover:text-destructive">
-                Rebuild Your Learning Plan
-              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" disabled={resetting} className="w-full text-destructive hover:text-destructive gap-2">
+                    {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                    Reset All Data
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Reset all data?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete all your data and return you to onboarding. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={resetAllData} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                      Reset Everything
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
               <p className="text-xs text-muted-foreground mt-2">
-                Restart the onboarding conversation to redefine your career goals, pillars, and topic map from scratch. Your history is preserved.
+                Wipe everything — profile, pillars, history, conversations — and start fresh from onboarding.
+              </p>
+            </div>
+
+            <div>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" disabled={resetting} className="w-full text-destructive hover:text-destructive gap-2">
+                      {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rewind className="h-4 w-4" />}
+                      Rewind
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Rewind learning history?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will wipe your learning history but keep your profile and pillars. Topic clusters will be reset to queued.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={rewindData} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                        Rewind
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Keep your profile and pillars, but wipe cycles, units, mentor conversations, and notes. Topic clusters reset to queued.
+                </p>
+              </div>
+
+            <div>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" disabled={resetting} className="w-full text-destructive hover:text-destructive gap-2">
+                    {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserX className="h-4 w-4" />}
+                    Delete Account
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete your account and all your data. You will be signed out. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={deleteAccount} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                      Delete Account
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+              <p className="text-xs text-muted-foreground mt-2">
+                Permanently delete your account and all data. You will be signed out.
               </p>
             </div>
           </CardContent>

@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { ThemeProvider } from "@/hooks/useTheme";
 import { DemoProvider, useDemo } from "@/hooks/useDemo";
+import { UnitGenerationProvider } from "@/hooks/useUnitGeneration";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import Onboarding from "./pages/Onboarding";
@@ -58,6 +59,7 @@ const App = () => (
             <Toaster />
             <Sonner />
             <BrowserRouter>
+              <UnitGenerationProvider>
               <Routes>
                 <Route path="/auth" element={<AuthRoute />} />
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -70,6 +72,7 @@ const App = () => (
                 <Route path="/about" element={<About />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </UnitGenerationProvider>
             </BrowserRouter>
           </TooltipProvider>
         </DemoProvider>

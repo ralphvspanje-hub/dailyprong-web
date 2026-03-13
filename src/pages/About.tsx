@@ -47,6 +47,16 @@ const About = () => {
               You don't need to know everything. You need to know the right things — deeply — and keep adding tines.
             </p>
           </div>
+
+          <div className="space-y-4 font-serif text-lg leading-[1.9]">
+            <h2 className="text-2xl font-bold text-foreground">
+              Don't be T-shaped. Be a prong.
+            </h2>
+            <p className="text-foreground/80">
+              The T-shape is the past; multiple is the future. Broaden your horizons, but dig deep into two or three distinct fields. It's where these areas overlap that your greatest ambition becomes reality.
+            </p>
+            <p className="italic text-foreground/80">Sharpen your prongs.</p>
+          </div>
         </article>
 
         <footer className="pt-8 border-t border-border">

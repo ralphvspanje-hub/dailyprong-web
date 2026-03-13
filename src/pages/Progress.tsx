@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useDemo, DEMO_PILLARS, DEMO_CYCLES } from "@/hooks/useDemo";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,29 +10,28 @@ import { Loader2, TrendingUp, TrendingDown, Minus } from "lucide-react";
 const Progress = () => {
   const { user } = useAuth();
   const { isDemo } = useDemo();
-  const [pillars, setPillars] = useState<any[]>([]);
-  const [cycles, setCycles] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (isDemo) {
-      setPillars(DEMO_PILLARS);
-      setCycles(DEMO_CYCLES);
-      setLoading(false);
-    } else if (user) {
-      loadProgress();
-    }
-  }, [user, isDemo]);
+  const { data: pillars = [], isLoading: pillarsLoading } = useQuery({
+    queryKey: ["pillars", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from("pillars").select("*").eq("user_id", user!.id).eq("is_active", true).order("sort_order");
+      return data || [];
+    },
+    enabled: !isDemo && !!user,
+    placeholderData: isDemo ? DEMO_PILLARS : undefined,
+  });
 
-  const loadProgress = async () => {
-    const [pillarsRes, cyclesRes] = await Promise.all([
-      supabase.from("pillars").select("*").eq("user_id", user!.id).eq("is_active", true).order("sort_order"),
-      supabase.from("cycles").select("*, pillars:pillar_id(name)").eq("user_id", user!.id).order("cycle_number", { ascending: false }).limit(20),
-    ]);
-    setPillars(pillarsRes.data || []);
-    setCycles(cyclesRes.data || []);
-    setLoading(false);
-  };
+  const { data: cycles = [], isLoading: cyclesLoading } = useQuery({
+    queryKey: ["cycles", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from("cycles").select("*, pillars:pillar_id(name)").eq("user_id", user!.id).order("cycle_number", { ascending: false }).limit(20);
+      return data || [];
+    },
+    enabled: !isDemo && !!user,
+    placeholderData: isDemo ? DEMO_CYCLES : undefined,
+  });
+
+  const loading = pillarsLoading || cyclesLoading;
 
   const trendIcon = (trend: string) => {
     if (trend === "up") return <TrendingUp className="h-4 w-4 text-success" />;

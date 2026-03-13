@@ -3,14 +3,15 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Send, Loader2, Zap, ChevronDown, Check } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
+import ReactMarkdown from "react-markdown";
 
 interface Message {
   role: "user" | "assistant";
@@ -48,6 +49,9 @@ interface OnboardingOutputs {
 
 const MAX_ONBOARDING_MSG_LENGTH = 3000;
 
+const TEXTAREA_BASE =
+  "w-full resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none [&::-webkit-scrollbar]:w-2.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-track]:mt-5 [&::-webkit-scrollbar-track]:pb-2 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[3px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb:hover]:bg-muted-foreground";
+
 const Onboarding = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -58,7 +62,20 @@ const Onboarding = () => {
   const [outputs, setOutputs] = useState<OnboardingOutputs | null>(null);
   const [saving, setSaving] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleTextareaInput = (e: React.FormEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 200) + "px";
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
 
   useEffect(() => {
     if (messages.length === 0) {
@@ -76,7 +93,14 @@ const Onboarding = () => {
       const { data, error } = await supabase.functions.invoke("onboarding-chat", {
         body: { messages: [], action: "start" },
       });
-      if (error) throw error;
+      if (error) {
+        let msg = error.message;
+        try {
+          const body = await (error as any).context?.json();
+          if (body?.error) msg = body.error;
+        } catch {}
+        throw new Error(msg);
+      }
       if (data.message) {
         setMessages([{ role: "assistant", content: data.message }]);
       }
@@ -99,6 +123,7 @@ const Onboarding = () => {
       return;
     }
     setInput("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
     const newMessages = [...messages, { role: "user" as const, content: userMessage }];
     setMessages(newMessages);
     setLoading(true);
@@ -107,7 +132,14 @@ const Onboarding = () => {
       const { data, error } = await supabase.functions.invoke("onboarding-chat", {
         body: { messages: newMessages, action: "continue" },
       });
-      if (error) throw error;
+      if (error) {
+        let msg = error.message;
+        try {
+          const body = await (error as any).context?.json();
+          if (body?.error) msg = body.error;
+        } catch {}
+        throw new Error(msg);
+      }
 
       if (data.outputs) {
         setOutputs(data.outputs);
@@ -213,7 +245,22 @@ const Onboarding = () => {
                           ? "bg-primary text-primary-foreground"
                           : "bg-card text-card-foreground border border-border"
                       }`}>
-                        {msg.content}
+                        {msg.role === "assistant" ? (
+                          <ReactMarkdown
+                            components={{
+                              p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+                              strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                              hr: () => <hr className="my-3 border-border" />,
+                              ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
+                              ul: ({ children }) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
+                              li: ({ children }) => <li className="pl-0.5">{children}</li>,
+                            }}
+                          >
+                            {msg.content}
+                          </ReactMarkdown>
+                        ) : (
+                          msg.content
+                        )}
                       </div>
                     </motion.div>
                   ))}
@@ -229,22 +276,46 @@ const Onboarding = () => {
               </div>
             </ScrollArea>
 
-            <div className="pt-4 border-t border-border space-y-1">
-              <div className="flex gap-2">
-                <Input
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value.slice(0, MAX_ONBOARDING_MSG_LENGTH))}
-                  onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                  placeholder="Tell me about your goals..."
-                  disabled={loading}
-                  className="flex-1"
-                />
-                <Button onClick={sendMessage} disabled={loading || !input.trim()} size="icon">
-                  <Send className="h-4 w-4" />
-                </Button>
+            <div className="pt-4 border-t border-border">
+              <div className="max-w-[680px] mx-auto">
+                <div className="flex flex-col border border-border bg-background rounded-2xl focus-within:ring-2 focus-within:ring-accent/50 focus-within:border-accent transition-shadow pr-2">
+                  <div className="relative overflow-hidden rounded-t-2xl">
+                    <textarea
+                      ref={inputRef}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value.slice(0, MAX_ONBOARDING_MSG_LENGTH))}
+                      onInput={handleTextareaInput}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Tell me about your goals..."
+                      disabled={loading}
+                      rows={1}
+                      className={`${TEXTAREA_BASE} min-h-[80px] max-h-[200px] px-4 pt-5 pb-3`}
+                    />
+                    <div className="pointer-events-none absolute inset-x-0 top-0 h-5 bg-background rounded-t-2xl" />
+                  </div>
+                  <div className="flex items-center justify-between px-4 pb-2">
+                    <span className="text-[10px] text-muted-foreground">
+                      {input.length}/{MAX_ONBOARDING_MSG_LENGTH}
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => sendMessage()}
+                          disabled={loading || !input.trim()}
+                          className={`h-8 w-8 rounded-full flex items-center justify-center transition-colors ${
+                            input.trim()
+                              ? "text-foreground hover:bg-muted"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          <Send className="h-4 w-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Send</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
               </div>
-              <p className="text-[10px] text-muted-foreground text-right">{input.length}/{MAX_ONBOARDING_MSG_LENGTH}</p>
             </div>
           </div>
         )}

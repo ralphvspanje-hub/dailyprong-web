@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useDemo, DEMO_UNITS, DEMO_PILLARS } from "@/hooks/useDemo";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,40 +12,54 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Loader2, Search, ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
+const SECTION_TYPES: Record<string, string> = {
+  concept: "Concept", deep_dive: "Deep Dive", case_study: "Case Study",
+  hands_on: "Hands-On", synthesis: "Synthesis",
+};
+
+function getUnitBadgeLabel(unit: { unit_role?: string; section_type?: string }): string {
+  switch (unit.unit_role) {
+    case "extra_resources": return "Extra Resources";
+    case "repeat": return `Another ${SECTION_TYPES[unit.section_type || ""] || unit.section_type}`;
+    case "bonus": return "Bonus";
+    default: return SECTION_TYPES[unit.section_type || ""] || unit.section_type || "";
+  }
+}
+
 const History = () => {
   const { user } = useAuth();
   const { isDemo } = useDemo();
-  const [units, setUnits] = useState<any[]>([]);
-  const [pillars, setPillars] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [pillarFilter, setPillarFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
 
-  useEffect(() => {
-    if (isDemo) {
-      setUnits(DEMO_UNITS);
-      setPillars(DEMO_PILLARS);
-      setLoading(false);
-    } else if (user) {
-      loadHistory();
-    }
-  }, [user, isDemo]);
-
-  const loadHistory = async () => {
-    const [unitsRes, pillarsRes] = await Promise.all([
-      supabase
+  const { data: units = [], isLoading: unitsLoading } = useQuery({
+    queryKey: ["units", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
         .from("units")
         .select("*, cycles!inner(user_id, theme, cycle_number, pillar_id, pillars:pillar_id(name))")
         .eq("cycles.user_id", user!.id)
+        .eq("is_pending_feedback", false)
         .order("created_at", { ascending: false })
-        .limit(100),
-      supabase.from("pillars").select("id, name").eq("user_id", user!.id).eq("is_active", true),
-    ]);
-    setUnits(unitsRes.data || []);
-    setPillars(pillarsRes.data || []);
-    setLoading(false);
-  };
+        .limit(100);
+      return data || [];
+    },
+    enabled: !isDemo && !!user,
+    placeholderData: isDemo ? DEMO_UNITS : undefined,
+  });
+
+  const { data: pillars = [], isLoading: pillarsLoading } = useQuery({
+    queryKey: ["pillars", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from("pillars").select("id, name").eq("user_id", user!.id).eq("is_active", true);
+      return data || [];
+    },
+    enabled: !isDemo && !!user,
+    placeholderData: isDemo ? DEMO_PILLARS : undefined,
+  });
+
+  const loading = unitsLoading || pillarsLoading;
 
   const filtered = units.filter((u) => {
     if (search && !u.topic?.toLowerCase().includes(search.toLowerCase()) && !u.content?.toLowerCase().includes(search.toLowerCase())) return false;
@@ -102,7 +117,7 @@ const History = () => {
                     <div className="text-left space-y-0.5 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium">{u.topic}</span>
-                        <Badge variant="secondary" className="text-[10px] capitalize">{u.section_type?.replace("_", " ")}</Badge>
+                        <Badge variant="secondary" className="text-[10px] capitalize">{getUnitBadgeLabel(u)}</Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">
                         {(u as any).cycles?.pillars?.name} · Cycle {(u as any).cycles?.cycle_number}

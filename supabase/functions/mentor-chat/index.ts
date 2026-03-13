@@ -1,69 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { checkRateLimit } from "../_shared/rateLimit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-async function checkRateLimit(
-  supabaseAdmin: any,
-  userId: string,
-  ipAddress: string,
-  endpoint: string
-): Promise<{ allowed: boolean; message?: string }> {
-  const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
-  // Check user limit (50/day)
-  const { data: userCalls } = await supabaseAdmin
-    .from("api_rate_limits")
-    .select("call_count")
-    .eq("user_id", userId)
-    .eq("endpoint", endpoint)
-    .gte("window_start", windowStart);
-
-  const userTotal = (userCalls || []).reduce(
-    (sum: number, r: any) => sum + r.call_count,
-    0
-  );
-  if (userTotal >= 50) {
-    return { allowed: false, message: "Daily limit reached." };
-  }
-
-  // Check IP limit (100/day)
-  const { data: ipCalls } = await supabaseAdmin
-    .from("api_rate_limits")
-    .select("call_count")
-    .eq("ip_address", ipAddress)
-    .eq("endpoint", endpoint)
-    .gte("window_start", windowStart);
-
-  const ipTotal = (ipCalls || []).reduce(
-    (sum: number, r: any) => sum + r.call_count,
-    0
-  );
-  if (ipTotal >= 100) {
-    return { allowed: false, message: "Too many requests." };
-  }
-
-  // Increment
-  await supabaseAdmin.from("api_rate_limits").insert({
-    user_id: userId,
-    ip_address: ipAddress,
-    endpoint,
-    call_count: 1,
-    window_start: new Date().toISOString(),
-  });
-
-  // Cleanup old rows (older than 48h)
-  const cleanupTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-  await supabaseAdmin
-    .from("api_rate_limits")
-    .delete()
-    .lt("window_start", cleanupTime);
-
-  return { allowed: true };
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -82,22 +24,22 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
+    const geminiApiKey = Deno.env.get("GEMINI_API_KEY")!;
 
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     });
 
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(
+    const { data: userData, error: userError } = await supabase.auth.getUser(
       authHeader.replace("Bearer ", "")
     );
-    if (claimsError || !claimsData?.claims) {
+    if (userError || !userData?.user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const userId = claimsData.claims.sub as string;
+    const userId = userData.user.id;
 
     // Rate limiting
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
@@ -190,48 +132,54 @@ For full_recalibration changes: {"redirect": true}
 AVAILABLE PILLAR IDS:
 ${pillars.map((p: any) => `- ${p.name}: ${p.id}`).join("\n") || "None"}`;
 
-    // Build messages for AI
-    const aiMessages = [
-      { role: "system", content: systemPrompt },
+    const contents = [
       ...(history || []).map((m: any) => ({
-        role: m.role,
-        content:
-          m.role === "user"
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{
+          text: m.role === "user"
             ? `[USER MESSAGE]: ${m.content} [/USER MESSAGE]`
             : m.content,
+        }],
       })),
       {
         role: "user",
-        content: `[USER MESSAGE]: ${message} [/USER MESSAGE]`,
+        parts: [{ text: `[USER MESSAGE]: ${message} [/USER MESSAGE]` }],
       },
     ];
 
-    // Call Lovable AI Gateway
     const aiResponse = await fetch(
-      "https://ai.gateway.lovable.dev/v1/chat/completions",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent",
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${lovableApiKey}`,
           "Content-Type": "application/json",
+          "x-goog-api-key": geminiApiKey,
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          messages: aiMessages,
-          max_tokens: 2048,
-          temperature: 0.7,
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents,
+          generationConfig: { maxOutputTokens: 2048, temperature: 0.7 },
         }),
       }
     );
 
     if (!aiResponse.ok) {
+      if (aiResponse.status === 429) {
+        return new Response(
+          JSON.stringify({ error: "The AI service is temporarily unavailable due to high demand. Please try again in a few minutes." }),
+          {
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
       const errText = await aiResponse.text();
       throw new Error(`AI API error: ${aiResponse.status} ${errText}`);
     }
 
     const aiData = await aiResponse.json();
     const assistantMessage =
-      aiData.choices?.[0]?.message?.content || "I'm sorry, I couldn't generate a response.";
+      aiData.candidates?.[0]?.content?.parts?.[0]?.text || "I'm sorry, I couldn't generate a response.";
 
     return new Response(
       JSON.stringify({ message: assistantMessage }),
@@ -240,8 +188,9 @@ ${pillars.map((p: any) => `- ${p.name}: ${p.id}`).join("\n") || "None"}`;
       }
     );
   } catch (err: any) {
+    console.error(err); // full error + stack visible in Supabase function logs
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({ error: "Internal server error" }),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

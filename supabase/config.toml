@@ -1,7 +1,19 @@
-project_id = "tquwzofictzxearqafkv"
+project_id = "hpubamqxoeckzrbvgsof"
 
 [functions.mentor-chat]
 verify_jwt = false
 
 [functions.apply-mentor-changes]
+verify_jwt = false
+
+[functions.generate-unit]
+verify_jwt = false
+
+[functions.onboarding-chat]
+verify_jwt = false
+
+[functions.process-feedback]
+verify_jwt = false
+
+[functions.reset-user-data]
 verify_jwt = false

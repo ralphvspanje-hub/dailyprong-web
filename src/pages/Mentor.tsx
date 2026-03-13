@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { useDemo, DEMO_MENTOR_MESSAGES, DEMO_PROFILE, DEMO_PILLARS } from "@/hooks/useDemo";
+import { useDemo, DEMO_MENTOR_MESSAGES } from "@/hooks/useDemo";
 import { useMentorName } from "@/hooks/useMentorName";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { supabase } from "@/integrations/supabase/client";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Send, Loader2, Plus, ArrowLeftRight, Pencil, BarChart3, Trash2, RefreshCw, Check, X } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
@@ -51,41 +52,45 @@ const parseProposedChanges = (content: string): { cleanContent: string; changes:
   }
 };
 
+const TEXTAREA_BASE =
+  "w-full resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none [&::-webkit-scrollbar]:w-2.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-track]:mt-5 [&::-webkit-scrollbar-track]:pb-2 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[3px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb:hover]:bg-muted-foreground";
+
 const Mentor = () => {
   const { user } = useAuth();
   const { isDemo } = useDemo();
   const { mentorName } = useMentorName();
+  const isMobile = useIsMobile();
   const [messages, setMessages] = useState<MentorMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(false);
   const [applyingChanges, setApplyingChanges] = useState<string | null>(null);
   const [dismissedChanges, setDismissedChanges] = useState<Set<number>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const didShowEmpty = useRef(false);
 
   useEffect(() => {
     if (isDemo) {
       setMessages(DEMO_MENTOR_MESSAGES as MentorMessage[]);
-      setInitialLoading(false);
-    } else if (user) {
-      loadMessages();
     }
-  }, [user, isDemo]);
+  }, [isDemo]);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const loadMessages = async () => {
-    const { data } = await supabase
-      .from("mentor_conversations")
-      .select("*")
-      .eq("user_id", user!.id)
-      .order("created_at", { ascending: true })
-      .limit(100);
-    setMessages((data as MentorMessage[]) || []);
-    setInitialLoading(false);
+  const handleTextareaInput = (e: React.FormEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 200) + "px";
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
   };
 
   const sendMessage = async (text?: string) => {
@@ -96,7 +101,10 @@ const Mentor = () => {
       return;
     }
 
-    if (!text) setInput("");
+    if (!text) {
+      setInput("");
+      if (inputRef.current) inputRef.current.style.height = "auto";
+    }
 
     const userMsg: MentorMessage = { role: "user", content: messageText };
     const newMessages = [...messages, userMsg];
@@ -116,7 +124,6 @@ const Mentor = () => {
     }
 
     try {
-      // Save user message
       await supabase.from("mentor_conversations").insert({
         user_id: user!.id,
         role: "user",
@@ -126,12 +133,18 @@ const Mentor = () => {
       const { data, error } = await supabase.functions.invoke("mentor-chat", {
         body: { message: messageText },
       });
-      if (error) throw error;
+      if (error) {
+        let msg = error.message;
+        try {
+          const body = await (error as any).context?.json();
+          if (body?.error) msg = body.error;
+        } catch {}
+        throw new Error(msg);
+      }
 
       const assistantMsg: MentorMessage = { role: "assistant", content: data.message };
       setMessages([...newMessages, assistantMsg]);
 
-      // Save assistant message
       await supabase.from("mentor_conversations").insert({
         user_id: user!.id,
         role: "assistant",
@@ -160,10 +173,16 @@ const Mentor = () => {
       const { error } = await supabase.functions.invoke("apply-mentor-changes", {
         body: changes,
       });
-      if (error) throw error;
+      if (error) {
+        let msg = error.message;
+        try {
+          const body = await (error as any).context?.json();
+          if (body?.error) msg = body.error;
+        } catch {}
+        throw new Error(msg);
+      }
 
       toast.success("Changes applied!");
-      // Reload to reflect changes
       window.location.reload();
     } catch (err: any) {
       toast.error("Failed to apply changes: " + err.message);
@@ -172,6 +191,11 @@ const Mentor = () => {
   };
 
   const hasConversation = messages.length > 0;
+  const showEmptyState = !isMobile && !hasConversation;
+
+  if (showEmptyState) didShowEmpty.current = true;
+
+  const openingMessage = `Hey! I'm ${mentorName} — your learning strategist. I know your Prongs, your pillars, and where you're headed. Think of me as a thinking partner who asks before they act. What's on your mind?`;
 
   return (
     <Layout>
@@ -186,147 +210,228 @@ const Mentor = () => {
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-accent" />
           </div>
-        ) : !hasConversation ? (
-          /* Empty State */
-          <div className="flex flex-col items-center justify-center py-16 space-y-8">
-            <div className="text-center space-y-4 max-w-lg">
-              <h1 className="font-serif text-3xl font-bold">Your {mentorName}</h1>
-              <p className="text-muted-foreground leading-relaxed">
-                Not just a learning engine — a thinking partner. Ask anything about your career direction, goals, or learning path. {mentorName} knows your pillars, your progress, and your trajectory. They ask before they act.
-              </p>
-            </div>
-            <div className="flex flex-wrap justify-center gap-2 max-w-lg">
-              {QUICK_ACTIONS.map((action) => (
-                <Button
-                  key={action.label}
-                  variant="outline"
-                  size="sm"
-                  className="gap-2"
-                  onClick={() => sendMessage(action.message)}
-                >
-                  <action.icon className="h-3.5 w-3.5" />
-                  {action.label}
-                </Button>
-              ))}
-            </div>
-          </div>
         ) : (
-          /* Active Conversation */
-          <div className="flex flex-col h-[calc(100vh-14rem)]">
-            <ScrollArea className="flex-1 pr-4">
-              <div className="space-y-4 pb-4">
-                <AnimatePresence>
-                  {messages.map((msg, i) => {
-                    const { cleanContent, changes } = msg.role === "assistant"
-                      ? parseProposedChanges(msg.content)
-                      : { cleanContent: msg.content, changes: null };
-                    const isDismissed = dismissedChanges.has(i);
+          <AnimatePresence mode="wait">
+            {showEmptyState ? (
+              /* ── Desktop Empty State ── */
+              <motion.div
+                key="empty"
+                className="flex flex-col items-center justify-center min-h-[calc(100dvh-10rem)]"
+                exit={{ opacity: 0, scale: 0.98 }}
+                transition={{ duration: 0.25 }}
+              >
+                <div className="mb-8 max-w-lg w-full">
+                  <div className="bg-card text-card-foreground border border-border rounded-lg px-4 py-3 text-sm leading-relaxed">
+                    <ReactMarkdown>{openingMessage}</ReactMarkdown>
+                  </div>
+                </div>
 
-                    return (
-                      <motion.div
-                        key={i}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3 }}
-                        className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                <div className="w-full max-w-[680px] space-y-3">
+                  <div className="flex flex-col border border-border bg-background rounded-2xl focus-within:ring-2 focus-within:ring-accent/50 focus-within:border-accent transition-shadow pr-2">
+                    <div className="relative overflow-hidden rounded-t-2xl">
+                      <textarea
+                        ref={inputRef}
+                        value={input}
+                        onChange={(e) => setInput(e.target.value.slice(0, MAX_MENTOR_MSG_LENGTH))}
+                        onInput={handleTextareaInput}
+                        onKeyDown={handleKeyDown}
+                        placeholder={`Ask ${mentorName} anything...`}
+                        disabled={loading}
+                        rows={1}
+                        className={`${TEXTAREA_BASE} min-h-[80px] max-h-[200px] px-4 pt-5 pb-3`}
+                        autoFocus
+                      />
+                      <div className="pointer-events-none absolute inset-x-0 top-0 h-5 bg-background rounded-t-2xl" />
+                    </div>
+                    <div className="flex items-center justify-between px-4 pb-2">
+                      <span className="text-[10px] text-muted-foreground">
+                        {input.length}/{MAX_MENTOR_MSG_LENGTH}
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={() => sendMessage()}
+                            disabled={loading || !input.trim()}
+                            className={`h-8 w-8 rounded-full flex items-center justify-center transition-colors ${
+                              input.trim()
+                                ? "text-foreground hover:bg-muted"
+                                : "text-muted-foreground"
+                            }`}
+                          >
+                            <Send className="h-4 w-4" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>Send</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {QUICK_ACTIONS.map((action) => (
+                      <button
+                        key={action.label}
+                        onClick={() => sendMessage(action.message)}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors disabled:opacity-50"
                       >
-                        <div className="max-w-[85%] space-y-2">
-                          <div className={`rounded-lg px-4 py-3 text-sm leading-relaxed ${
-                            msg.role === "user"
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-card text-card-foreground border border-border"
-                          }`}>
-                            {msg.role === "assistant" ? (
-                              <div className="prose-powerhouse text-sm max-w-none">
-                                <ReactMarkdown>{cleanContent}</ReactMarkdown>
+                        <action.icon className="h-3 w-3" />
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            ) : (
+              /* ── Active Conversation ── */
+              <motion.div
+                key="active"
+                initial={!isMobile && didShowEmpty.current ? { opacity: 0, y: 20 } : false}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+                onAnimationComplete={() => inputRef.current?.focus()}
+                className="flex flex-col h-[calc(100dvh-10rem)] md:h-[calc(100dvh-7rem)]"
+              >
+                <ScrollArea className="flex-1">
+                  <div className="space-y-4 pt-4 pb-4 pr-2">
+                    <AnimatePresence>
+                      {messages.map((msg, i) => {
+                        const { cleanContent, changes } =
+                          msg.role === "assistant"
+                            ? parseProposedChanges(msg.content)
+                            : { cleanContent: msg.content, changes: null };
+                        const isDismissed = dismissedChanges.has(i);
+
+                        return (
+                          <motion.div
+                            key={i}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.3 }}
+                            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                          >
+                            <div className="max-w-[85%] space-y-2">
+                              <div
+                                className={`rounded-lg px-4 py-3 text-sm leading-relaxed ${
+                                  msg.role === "user"
+                                    ? "bg-accent text-accent-foreground"
+                                    : "bg-card text-card-foreground border border-border"
+                                }`}
+                              >
+                                {msg.role === "assistant" ? (
+                                  <div className="prose-powerhouse text-sm max-w-none">
+                                    <ReactMarkdown>{cleanContent}</ReactMarkdown>
+                                  </div>
+                                ) : (
+                                  msg.content
+                                )}
                               </div>
-                            ) : (
-                              msg.content
-                            )}
-                          </div>
-                          {changes && !isDismissed && (
-                            <Card className="border-accent/30">
-                              <CardContent className="py-3 space-y-3">
-                                <p className="text-sm font-medium">Apply these changes?</p>
-                                <p className="text-xs text-muted-foreground">
-                                  Action: <span className="capitalize">{changes.action.replace(/_/g, " ")}</span>
-                                </p>
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    className="gap-1"
-                                    onClick={() => applyChanges(changes)}
-                                    disabled={!!applyingChanges}
-                                  >
-                                    {applyingChanges === changes.action ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                    ) : (
-                                      <Check className="h-3 w-3" />
-                                    )}
-                                    Confirm
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="gap-1"
-                                    onClick={() => setDismissedChanges(new Set([...dismissedChanges, i]))}
-                                  >
-                                    <X className="h-3 w-3" />
-                                    Cancel
-                                  </Button>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          )}
+                              {changes && !isDismissed && (
+                                <Card className="border-accent/30">
+                                  <CardContent className="py-3 space-y-3">
+                                    <p className="text-sm font-medium">Apply these changes?</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      Action: <span className="capitalize">{changes.action.replace(/_/g, " ")}</span>
+                                    </p>
+                                    <div className="flex gap-2">
+                                      <Button
+                                        size="sm"
+                                        className="gap-1"
+                                        onClick={() => applyChanges(changes)}
+                                        disabled={!!applyingChanges}
+                                      >
+                                        {applyingChanges === changes.action ? (
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <Check className="h-3 w-3" />
+                                        )}
+                                        Confirm
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="gap-1"
+                                        onClick={() => setDismissedChanges(new Set([...dismissedChanges, i]))}
+                                      >
+                                        <X className="h-3 w-3" />
+                                        Cancel
+                                      </Button>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              )}
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </AnimatePresence>
+                    {loading && (
+                      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
+                        <div className="bg-card border border-border rounded-lg px-4 py-3">
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                         </div>
                       </motion.div>
-                    );
-                  })}
-                </AnimatePresence>
-                {loading && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
-                    <div className="bg-card border border-border rounded-lg px-4 py-3">
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    </div>
-                  </motion.div>
-                )}
-                <div ref={scrollRef} />
-              </div>
-            </ScrollArea>
+                    )}
+                    <div ref={scrollRef} />
+                  </div>
+                </ScrollArea>
 
-            <div className="pt-4 border-t border-border space-y-2">
-              <div className="flex flex-wrap gap-1.5">
-                {QUICK_ACTIONS.map((action) => (
-                  <Button
-                    key={action.label}
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground"
-                    onClick={() => sendMessage(action.message)}
-                    disabled={loading}
-                  >
-                    <action.icon className="h-3 w-3" />
-                    {action.label}
-                  </Button>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value.slice(0, MAX_MENTOR_MSG_LENGTH))}
-                  onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                  placeholder={`Ask ${mentorName} anything...`}
-                  disabled={loading}
-                  className="flex-1"
-                />
-                <Button onClick={() => sendMessage()} disabled={loading || !input.trim()} size="icon">
-                  <Send className="h-4 w-4" />
-                </Button>
-              </div>
-              <p className="text-[10px] text-muted-foreground text-right">{input.length}/{MAX_MENTOR_MSG_LENGTH}</p>
-            </div>
-          </div>
+                {/* Pinned input bar */}
+                <div className="pt-3 space-y-2 backdrop-blur-sm bg-background/80">
+                  <div className="flex flex-wrap gap-1.5">
+                    {QUICK_ACTIONS.map((action) => (
+                      <button
+                        key={action.label}
+                        onClick={() => sendMessage(action.message)}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors disabled:opacity-50"
+                      >
+                        <action.icon className="h-3 w-3" />
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-col border border-border bg-background rounded-xl focus-within:ring-2 focus-within:ring-accent/50 focus-within:border-accent transition-shadow pr-2">
+                    <div className="relative overflow-hidden rounded-t-xl">
+                      <textarea
+                        ref={inputRef}
+                        value={input}
+                        onChange={(e) => setInput(e.target.value.slice(0, MAX_MENTOR_MSG_LENGTH))}
+                        onInput={handleTextareaInput}
+                        onKeyDown={handleKeyDown}
+                        placeholder={`Ask ${mentorName} anything...`}
+                        disabled={loading}
+                        rows={1}
+                        className={`${TEXTAREA_BASE} min-h-[56px] max-h-[200px] px-4 pt-5 pb-3`}
+                      />
+                      <div className="pointer-events-none absolute inset-x-0 top-0 h-5 bg-background rounded-t-xl" />
+                    </div>
+                    <div className="flex items-center justify-between px-4 pb-2">
+                      <span className="text-[10px] text-muted-foreground">
+                        {input.length}/{MAX_MENTOR_MSG_LENGTH}
+                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={() => sendMessage()}
+                            disabled={loading || !input.trim()}
+                            className={`h-8 w-8 rounded-full flex items-center justify-center transition-colors ${
+                              loading || !input.trim()
+                                ? "text-muted-foreground"
+                                : "text-foreground hover:bg-muted"
+                            }`}
+                          >
+                            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>Send</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         )}
       </div>
     </Layout>

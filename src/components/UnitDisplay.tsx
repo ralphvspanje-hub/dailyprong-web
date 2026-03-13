@@ -21,6 +21,8 @@ interface UnitData {
   is_bridge: boolean;
   bridge_prerequisite_for?: string;
   is_pending_feedback: boolean;
+  is_bonus?: boolean;
+  unit_role?: string;
   cycle_theme?: string;
   pillar_name?: string;
   total_sections?: number;
@@ -56,6 +58,16 @@ export const UnitDisplay = ({ unit, onFeedback, feedbackLoading }: UnitDisplayPr
     hands_on: "Hands-On", synthesis: "Synthesis",
   };
 
+  const getBadgeLabel = () => {
+    switch (unit.unit_role) {
+      case "extra_resources": return "Extra Resources";
+      case "repeat": return `Another ${sectionTypes[unit.section_type] || unit.section_type}`;
+      case "bonus": return "Bonus";
+      case "cycle_recap": return "Cycle Recap";
+      default: return sectionTypes[unit.section_type] || unit.section_type;
+    }
+  };
+
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="space-y-6">
       <div className="space-y-3">
@@ -64,7 +76,10 @@ export const UnitDisplay = ({ unit, onFeedback, feedbackLoading }: UnitDisplayPr
           <span>·</span><span>{unit.cycle_theme}</span><span>·</span><span>{unit.pillar_name}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary">{sectionTypes[unit.section_type] || unit.section_type}</Badge>
+          <Badge variant="secondary">{getBadgeLabel()}</Badge>
+          {unit.section_type === "synthesis" && !unit.is_bonus && (
+            <Badge variant="outline" className="text-xs text-accent border-accent/40">Final section</Badge>
+          )}
           <div className="flex gap-0.5">
             {[1, 2, 3, 4, 5].map((l) => (
               <div key={l} className={`h-1.5 w-3 rounded-full ${l <= unit.difficulty_level ? "bg-accent" : "bg-muted"}`} />
@@ -77,6 +92,12 @@ export const UnitDisplay = ({ unit, onFeedback, feedbackLoading }: UnitDisplayPr
         </div>
         <h1 className="font-serif text-2xl md:text-3xl font-bold">{unit.topic}</h1>
       </div>
+
+      {unit.section_type === "synthesis" && !unit.is_bonus && unit.unit_role !== "cycle_recap" && (
+        <div className="rounded-lg border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-accent">
+          This is the final section of your cycle — bring it all together
+        </div>
+      )}
 
       <Separator />
 
